@@ -1,26 +1,36 @@
 import sys
 import logging
 import os
+import random
+import pathlib
 from datetime import datetime
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QDesktopWidget,
-    QVBoxLayout, QHBoxLayout, QSpacerItem, QSizePolicy, QStackedLayout,
-    QSlider, QComboBox, QLineEdit, QDialog, QDialogButtonBox, QFileDialog, QColorDialog,
-    QCheckBox, QDoubleSpinBox
+    QVBoxLayout, QHBoxLayout, QSizePolicy, QStackedLayout,
+    QSlider, QGroupBox, QLineEdit, QDialog, QDialogButtonBox, QFileDialog, 
+    QColorDialog,QDoubleSpinBox, QStyle, QToolButton,QComboBox, QMessageBox
 )
 from PyQt5.QtCore import (
     QTimer, Qt, QBasicTimer, QPropertyAnimation, QEasingCurve, 
-    pyqtProperty, QUrl
+    pyqtProperty, QUrl, QCoreApplication, QSize, QPoint
 )
 from PyQt5.QtGui import (
     QFont, QFontDatabase, QPainter, QColor, QPalette
 )
-from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
+from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent, QSoundEffect
+from animated_toggle import AnimatedToggle
+
+
+# ----------------------------------------------
+QCoreApplication.setAttribute(Qt.AA_EnableHighDpiScaling)
 
 # Configuration Constants - uncustomizable
 BUTTON_COLOR = "purple"
 BUTTON_TEXT_COLOR = "white"
 WIGGLE_BACKGROUND_COLOR = "white"
+
+BUTTON_COLORS = [QColor(255, 160, 255), QColor(166, 255, 240)]
+BUTTON_HOVER_COLORS = [QColor(160, 20, 160), QColor(0, 175, 150)]
 
 # Global Defaults for Colors
 DEFAULT_BACKGROUND_COLOR = QColor(0, 0, 0)  # Black
@@ -28,7 +38,7 @@ DEFAULT_FLASH_COLOR = QColor(255, 0, 0)      # Red
 DEFAULT_CLOCK_TEXT_COLOR = QColor(255, 255, 255)  # White
 DEFAULT_BUTTON_COLOR = QColor(128, 0, 128)    # Purple
 
-DEFAULT_FLASH_DURATION = 2.5  # in seconds
+DEFAULT_FLASH_DURATION = 5  # in seconds
 DEFAULT_FLASH_REGULARITY = 15  # in minutes
 DEFAULT_VOLUME_LEVEL = 0.3
 
@@ -40,9 +50,10 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 # Update your resource paths
-RESOURCE_PATH = resource_path('resources')
-FONT_PATH = os.path.join(RESOURCE_PATH, 'bayer_universal_type.ttf')
-DEFAULT_AUDIO_PATH = os.path.join(RESOURCE_PATH, 'wiggle_wiggle_LMFAO_clip.mp3')
+RESOURCE_PATH = pathlib.Path(resource_path('resources'))
+
+FONT_PATH = RESOURCE_PATH / 'bayer_universal_type.ttf'
+DEFAULT_AUDIO_PATH = RESOURCE_PATH / 'wiggle_wiggle_LMFAO_clip.mp3'
 
 # --------------------------------------------------
 
@@ -50,6 +61,7 @@ DEFAULT_AUDIO_PATH = os.path.join(RESOURCE_PATH, 'wiggle_wiggle_LMFAO_clip.mp3')
 logging.basicConfig(level=logging.INFO)
 
 class AppConfig:
+    """Singleton class to manage application configuration settings."""
     _instance = None
 
     def __new__(cls):
@@ -60,118 +72,211 @@ class AppConfig:
 
     def init_settings(self):
         """Initialize default settings."""
-        self.use_24h_format = True
+        self.toggle_24h = True
         self.flash_duration = 2.5
         self.flash_regularity = 15
-        self.audio_path = DEFAULT_AUDIO_PATH
+        self.audio_path = str(DEFAULT_AUDIO_PATH)  # Store as string
         self.volume_level = 0.3
         self.background_color = QColor(0, 0, 0)
         self.flash_color = QColor(255, 0, 0)
         self.clock_text_color = QColor(255, 255, 255)
-        self.button_color = QColor(128, 0, 128)
+        self.button_color = QColor(128, 0, 128)  # Refers to the two pushbuttons on the main clock screen
 
     def update_setting(self, key, value):
+        """Update a setting."""
         setattr(self, key, value)
-        
 # --------------------------------------------------
 
 class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Clock Settings")
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
 
-        # Access the singleton instance
+        # Access the singleton instance    
         self.config = AppConfig()
-        
-        # Set the initial values from the config instance
-        self.use_24h_format = self.config.use_24h_format
-        self.flash_duration = self.config.flash_duration
-        self.flash_regularity = self.config.flash_regularity
-        self.audio_path = self.config.audio_path
-        self.volume_level = self.config.volume_level
-        self.background_color = self.config.background_color
-        self.flash_color = self.config.flash_color
-        self.clock_text_color = self.config.clock_text_color
-        self.button_color = self.config.button_color
-        
+
         # Set the dialog on the primary screen (Screen 0)
-        self.move_to_primary_screen()
+        # self.move_to_primary_screen()
+
+        # create a dictionary to store the colors of the buttons
+        self.color_buttons = {}
+        
+        # Initialize the sound effect for volume feedback
+        self.init_sound_effect()
         
         # UI Elements
         self.init_ui()
 
     def init_ui(self):
         """Set up the settings dialog UI."""
-        layout = QVBoxLayout(self)
+        main_layout = QVBoxLayout(self)
 
-        # Flash Duration Slider
-        layout.addWidget(QLabel("Flash Duration (1.0 to 10.0 seconds)"))
+        # Flash Settings Group
+        flash_group = QGroupBox("Flash Settings")
+        flash_layout = QVBoxLayout()
+
+        # Flash Duration Input
+        flash_layout.addWidget(QLabel("Flash Duration (1.0 to 10.0 seconds)"))
         self.flash_duration_input = QDoubleSpinBox(self)
-        self.flash_duration_input.setRange(1.0, 10.0)  # Allow values from 1.0 to 10.0 seconds
-        self.flash_duration_input.setSingleStep(0.1)    # Step size for fractional values
-        self.flash_duration_input.setValue(self.flash_duration)
-        layout.addWidget(self.flash_duration_input)
-        
-        # Flash Regularity Dropdown
-        layout.addWidget(QLabel("Flash Regularity (minutes)"))
-        self.flash_regularity_combo = QComboBox()
-        self.flash_regularity_combo.addItems(["5", "6", "10", "12", "15", "20", "30"])
-        self.flash_regularity_combo.setCurrentText(str(self.flash_regularity))
-        layout.addWidget(self.flash_regularity_combo)
-        
-        # 24-hour format checkbox
-        self.use_24h_checkbox = QCheckBox("Use 24-hour format")
-        self.use_24h_checkbox.setChecked(self.use_24h_format)
-        layout.addWidget(self.use_24h_checkbox)
+        self.flash_duration_input.setRange(1.0, 10.0)
+        self.flash_duration_input.setSingleStep(0.1)
+        self.flash_duration_input.setValue(self.config.flash_duration)
+        flash_layout.addWidget(self.flash_duration_input)
+
+        # Flash Regularity Input (replaced QSpinBox with QComboBox)
+        flash_layout.addWidget(QLabel("Flash Regularity (minutes)"))
+        self.flash_regularity_combo = QComboBox(self)
+        self.update_flash_regularity_options(60)  # Populate with divisors of 60
+        self.flash_regularity_combo.setCurrentText(str(self.config.flash_regularity))  # Set initial value
+        flash_layout.addWidget(self.flash_regularity_combo)
+
+        flash_group.setLayout(flash_layout)
+        main_layout.addWidget(flash_group)
+
+
+        # Time Format Group
+        time_format_group = QGroupBox("Time Format")
+        time_format_layout = QHBoxLayout()
+        time_format_layout.addWidget(QLabel("Use 24-hour Clock?"))
+        self.toggle_24h_clock = AnimatedToggle()
+        self.toggle_24h_clock.setChecked(self.config.toggle_24h)
+        time_format_layout.addWidget(self.toggle_24h_clock)
+        time_format_group.setLayout(time_format_layout)
+        main_layout.addWidget(time_format_group)
+
+        # Audio Settings Group
+        audio_group = QGroupBox("Audio Settings")
+        audio_layout = QVBoxLayout()
 
         # Audio File Selection
-        layout.addWidget(QLabel("Audio File Path"))
-        self.audio_input = QLineEdit(self.audio_path)
+        audio_path_layout = QHBoxLayout()
+        audio_path_layout.addWidget(QLabel("Audio File Path"))
+        self.audio_input = QLineEdit(str(self.config.audio_path))
         self.browse_button = QPushButton("Browse")
         self.browse_button.clicked.connect(self.browse_audio)
-        audio_layout = QHBoxLayout()
-        audio_layout.addWidget(self.audio_input)
-        audio_layout.addWidget(self.browse_button)
-        layout.addLayout(audio_layout)
+        audio_path_layout.addWidget(self.audio_input)
+        audio_path_layout.addWidget(self.browse_button)
+        audio_layout.addLayout(audio_path_layout)
 
-        # Volume Slider
-        layout.addWidget(QLabel("Volume Level"))
+        # Volume Slider with Label
+        audio_layout.addWidget(QLabel("Volume Level"))
+        volume_layout = QHBoxLayout()
         self.volume_slider = QSlider(Qt.Horizontal)
         self.volume_slider.setRange(0, 100)
-        self.volume_slider.setValue(int(self.volume_level)) # saved as an integer between 0 and 100
-        layout.addWidget(self.volume_slider)
+        self.volume_slider.setValue(int(self.config.volume_level * 100))
+        volume_layout.addWidget(self.volume_slider)
+        self.volume_label = QLabel(f"{self.volume_slider.value()}%")
+        volume_layout.addWidget(self.volume_label)
+        audio_layout.addLayout(volume_layout)
 
-        # Color Pickers
-        layout.addWidget(QLabel("Background Color"))
-        self.background_color_button = QPushButton()
-        self.set_color_button(self.background_color_button, self.background_color)
-        self.background_color_button.clicked.connect(self.choose_background_color)
-        layout.addWidget(self.background_color_button)
+        audio_group.setLayout(audio_layout)
+        main_layout.addWidget(audio_group)
 
-        layout.addWidget(QLabel("Flash Color"))
-        self.flash_color_button = QPushButton()
-        self.set_color_button(self.flash_color_button, self.flash_color)
-        self.flash_color_button.clicked.connect(self.choose_flash_color)
-        layout.addWidget(self.flash_color_button)
+        self.volume_slider.valueChanged.connect(self.update_volume_label)
+        self.volume_slider.valueChanged.connect(self.debounce_play_beep)
 
-        layout.addWidget(QLabel("Clock Text Color"))
-        self.clock_text_color_button = QPushButton()
-        self.set_color_button(self.clock_text_color_button, self.clock_text_color)
-        self.clock_text_color_button.clicked.connect(self.choose_clock_text_color)
-        layout.addWidget(self.clock_text_color_button)
 
-        layout.addWidget(QLabel("Button Color"))
-        self.button_color_button = QPushButton()
-        self.set_color_button(self.button_color_button, self.button_color)
-        self.button_color_button.clicked.connect(self.choose_button_color)
-        layout.addWidget(self.button_color_button)
-        
-        # Save and Start Buttons
+        # Color Settings Group
+        color_group = QGroupBox("Color Settings")
+        color_layout = QVBoxLayout()
+
+        # Background Color
+        self.create_color_picker(color_layout, "Background Color", self.config.background_color, "background_color")
+
+        # Flash Color
+        self.create_color_picker(color_layout, "Flash Color", self.config.flash_color, "flash_color")
+
+        # Clock Text Color
+        self.create_color_picker(color_layout, "Clock Text Color", self.config.clock_text_color, "clock_text_color")
+
+        # Button Color
+        self.create_color_picker(color_layout, "Button Color", self.config.button_color, "button_color")
+
+        color_group.setLayout(color_layout)
+        main_layout.addWidget(color_group)
+
+        # Restore Defaults Button
+        restore_defaults_button = QPushButton("Restore Defaults")
+        restore_defaults_button.clicked.connect(self.restore_defaults)
+        main_layout.addWidget(restore_defaults_button)
+
+        # Accept and Exit Buttons
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.customize_buttons(buttons)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        main_layout.addWidget(buttons)
         
+    def update_flash_regularity_options(self, number):
+        """Populate the combo box with divisors of the given number."""
+        divisors = [i for i in range(1, number + 1) if number % i == 0]  # Divisors of 60
+        self.flash_regularity_combo.clear()  # Clear existing items if any
+        self.flash_regularity_combo.addItems([str(d) for d in divisors])  # Add divisors to combo box
+
+    def restore_defaults(self):
+        """Restore settings to default values."""
+        self.flash_duration_input.setValue(DEFAULT_FLASH_DURATION)
+        self.flash_regularity_combo.setCurrentText(str(DEFAULT_FLASH_REGULARITY))  # Update this line
+        self.audio_input.setText(str(DEFAULT_AUDIO_PATH))
+        self.volume_slider.setValue(int(DEFAULT_VOLUME_LEVEL * 100))
+        self.toggle_24h_clock.setChecked(True)
+        self.set_color_button(self.color_buttons['background_color'], DEFAULT_BACKGROUND_COLOR)
+        self.set_color_button(self.color_buttons['flash_color'], DEFAULT_FLASH_COLOR)
+        self.set_color_button(self.color_buttons['clock_text_color'], DEFAULT_CLOCK_TEXT_COLOR)
+        self.set_color_button(self.color_buttons['button_color'], DEFAULT_BUTTON_COLOR)
+
+    
+    def update_volume_label(self, value):
+        """Update the volume label to reflect the slider's current value."""
+        self.volume_label.setText(f"{value}%")    
+    
+    def init_sound_effect(self):
+        """Dynamically load all .wav files from the resources directory for volume slider feedback."""
+
+        # List of beep sound files (only .wav files)
+        self.beep_paths = list(RESOURCE_PATH.glob('*.wav'))
+
+        # Clear the sound effects list before loading
+        self.sound_effects = []
+
+        # Preload all .wav files as QSoundEffect
+        for path in self.beep_paths:
+            sound = QSoundEffect()
+            if path.exists():
+                sound.setSource(QUrl.fromLocalFile(str(path)))
+                sound.setLoopCount(1)  # Play the beep once per trigger
+                sound.setVolume(self.config.volume_level)  # Initial volume
+                self.sound_effects.append(sound)
+                #logging.info(f"Beep sound loaded from: {path}")
+            else:
+                logging.error(f"Beep sound file not found: {path}")
+
+        # Initialize a timer to debounce slider movements
+        self.beep_timer = QTimer()
+        self.beep_timer.setSingleShot(True)
+        self.beep_timer.timeout.connect(self.play_random_beep)
+        
+    def play_random_beep(self):
+        """Play a random beep sound based on the current volume."""
+        if self.sound_effects:
+            beep_sound = random.choice(self.sound_effects)  # Randomly select a sound effect
+            beep_sound.setVolume(self.current_volume)  # Adjust volume based on slider
+            beep_sound.stop()  # Stop any currently playing beep to prevent overlap
+            beep_sound.play()
+            logging.info(f"Playing beep sound at volume: {self.current_volume}")
+        else:
+            logging.warning("No beep sounds available to play.")
+
+
+    def create_color_picker(self, layout, label_text, color, attribute_name):
+        layout.addWidget(QLabel(label_text))
+        button = QPushButton()
+        self.set_color_button(button, color)
+        button.clicked.connect(lambda: self.choose_color(button, attribute_name))
+        layout.addWidget(button)
+        self.color_buttons[attribute_name] = button
+
     def set_color_button(self, button, color):
         """Set the background color of a QPushButton."""
         palette = button.palette()
@@ -179,56 +284,56 @@ class SettingsDialog(QDialog):
         button.setAutoFillBackground(True)
         button.setPalette(palette)
         button.update()
-        
-    def choose_background_color(self):
-        """Launch color picker for background color."""
-        color = QColorDialog.getColor(self.background_color, self, "Select Background Color")
-        if color.isValid():
-            self.background_color = color
-            self.set_color_button(self.background_color_button, color)
 
-    def choose_flash_color(self):
-        """Launch color picker for flash color."""
-        color = QColorDialog.getColor(self.flash_color, self, "Select Flash Color")
+    def choose_color(self, button, attribute_name):
+        current_color = getattr(self.config, attribute_name)
+        color = QColorDialog.getColor(current_color, self, f"Select {attribute_name.replace('_', ' ').title()} Color")
         if color.isValid():
-            self.flash_color = color
-            self.set_color_button(self.flash_color_button, color)
-
-    def choose_clock_text_color(self):
-        """Launch color picker for clock text color."""
-        color = QColorDialog.getColor(self.clock_text_color, self, "Select Clock Text Color")
-        if color.isValid():
-            self.clock_text_color = color
-            self.set_color_button(self.clock_text_color_button, color)
-
-    def choose_button_color(self):
-        """Launch color picker for button color."""
-        color = QColorDialog.getColor(self.button_color, self, "Select Button Color")
-        if color.isValid():
-            self.button_color = color
-            self.set_color_button(self.button_color_button, color)\
-                
+            self.set_color_button(button, color)
+            setattr(self.config, attribute_name, color)
+            
     def browse_audio(self):
-        """Open a file dialog to select the audio file."""
         file_path, _ = QFileDialog.getOpenFileName(self, "Select Audio File", "", "Audio Files (*.mp3 *.wav)")
         if file_path:
-            self.audio_path = file_path
             self.audio_input.setText(file_path)
-
-
+            self.config.audio_path = file_path
+    
+    def debounce_play_beep(self, value):
+        """Start or restart the beep timer on slider value change."""
+        self.current_volume = value / 100.0 if value > 1 else value
+        self.beep_timer.start(200)  # Wait 200ms before playing beep
+        
     def accept(self):
         """Save the settings when 'Ok' is pressed."""
-        self.config.flash_duration = self.flash_duration_input.value()  # Update to use QDoubleSpinBox value
-        self.config.use_24h_format = self.use_24h_checkbox.isChecked()
-        self.config.flash_regularity = int(self.flash_regularity_combo.currentText())
-        self.config.audio_path = self.audio_input.text()
-        self.config.volume_level = self.volume_slider.value() / 100
-        self.config.background_color = self.background_color
-        self.config.flash_color = self.flash_color
-        self.config.clock_text_color = self.clock_text_color
-        self.config.button_color = self.button_color
+        self.config.update_setting('flash_duration', self.flash_duration_input.value())
+        self.config.update_setting('flash_regularity', int(self.flash_regularity_combo.currentText()))
+        self.config.update_setting('audio_path', self.audio_input.text())
+        self.config.update_setting('volume_level', self.volume_slider.value() / 100.0)
+        self.config.update_setting('toggle_24h', self.toggle_24h_clock.isChecked())
+        # Colors are already updated in choose_color
         super().accept()
-        
+
+    def reject(self):
+        """Prompt user before closing the application when 'Cancel' is pressed."""
+        reply = QMessageBox.question(
+            self, 'Confirm Exit',
+            "Are you sure you want to exit=?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            QApplication.quit()
+    def reject(self):
+        """Prompt user before closing the settings dialog when 'Cancel' is pressed."""
+        reply = QMessageBox.question(
+            self, 'Confirm Exit',
+            "Are you sure you want to exit?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            super().reject()  # Close the dialog and return QDialog.Rejected
+        # Else, do nothing and keep the dialog open
+
+
     def move_to_primary_screen(self):
         """Move the dialog to the primary (main) screen."""
         desktop = QDesktopWidget()
@@ -240,7 +345,46 @@ class SettingsDialog(QDialog):
             primary_screen_geometry.center().x() - dialog_width // 2,
             primary_screen_geometry.center().y() - dialog_height // 2
         )
+
+    def apply_button_style(self, button, color, hover_color):
+        button.setMinimumHeight(50)
+        button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {color.name()};
+                color: black;
+                border-radius: 10px;
+                font-size: 16px;
+                padding: 10px 12px;
+            }}
+            QPushButton:hover {{
+                background-color: {hover_color.name()};
+                color: red;
+            }}
+        """)
         
+    def customize_buttons(self, button_box):
+        """Customize the appearance of QDialogButtonBox buttons."""
+        # Increase the font size of the buttons and apply styles
+        button_font = QFont("Helvetica", 16)
+        button_box.setFont(button_font)
+        for i, button in enumerate(button_box.buttons()):
+            button.setMinimumHeight(50)
+            button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            button.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {BUTTON_COLORS[i].name()};
+                    color: black;
+                    border-radius: 10px;
+                    font-size: 16px;
+                    padding: 10px 12px;
+                }}
+                QPushButton:hover {{
+                    background-color: {BUTTON_HOVER_COLORS[i].name()};
+                    color: red;
+                }}
+            """)
+            
 # --------------------------------------------------
 
 class MainWindow(QWidget):
@@ -298,6 +442,17 @@ class MainWindow(QWidget):
             self.wiggle_flash.setFixedSize(extended_screen.width(), extended_screen.height())
         else:
             self.showMaximized()
+            
+    def update_audio_volume(self):
+        self.wiggle_flash.player.setVolume(int(self.config.volume_level * 100))
+
+def determine_flash_length():
+    # round down to the nearest whole number
+    int_flash_dur = int(DEFAULT_FLASH_DURATION)
+    numFlashes = int_flash_dur*2
+    extratime = DEFAULT_FLASH_DURATION/numFlashes-500
+    flash_dur = 500+extratime 
+    return (int(numFlashes), int(flash_dur))
 
 class BigClockApp(QWidget):
     """A fullscreen clock application with a customizable display."""
@@ -310,7 +465,7 @@ class BigClockApp(QWidget):
         # Set up timer for updating time
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_time)
-        self.timer.start(400)  # Update every 500ms
+        self.timer.start(250)  # Update every so often
 
         # Set up timer for flashing
         self.flash_timer = QTimer(self)
@@ -318,11 +473,14 @@ class BigClockApp(QWidget):
 
         # Initialize flash color
         self._flash_color = QColor(self.config.background_color)
+            
+        # Parse configs set by user and determine the number of flashes and their duration
+        num_and_duration = determine_flash_length()
         
         # Set up flash animation
         self.flash_animation = QPropertyAnimation(self, b"flash_color")
-        self.flash_animation.setDuration(500)
-        self.flash_animation.setLoopCount(6)  # Ensure an even number of flashes
+        self.flash_animation.setDuration(num_and_duration[1])  # 500ms ish
+        self.flash_animation.setLoopCount(num_and_duration[0])  # Even number of flashes
         self.flash_animation.setStartValue(self.config.background_color)
         self.flash_animation.setEndValue(self.config.flash_color)
         self.flash_animation.setEasingCurve(QEasingCurve.InOutQuad)
@@ -332,7 +490,8 @@ class BigClockApp(QWidget):
     def init_ui(self):    
         """Initialize the user interface."""
         self.setWindowTitle("Big Clock")
-        self.setWindowFlags(Qt.FramelessWindowHint)
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+        self.titleBar = CustomTitleBar(self)
         
         self.set_background_color(self.config.background_color)        
         self.load_font()
@@ -340,31 +499,9 @@ class BigClockApp(QWidget):
         # Initialize UI elements
         self.date_label = self.create_date_label()
         self.time_label = self.create_time_label()
-        self.close_button = self.create_close_button()
-        self.settings_button = self.create_settings_button()
 
         self.setup_layouts()
         self.update_time()
-        
-    def create_settings_button(self):
-        """Create and return the settings button."""
-        button = QPushButton(" : ) ", self)
-        button.setFont(self.font)
-        button.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {self.config.button_color.name()};
-                color: black;
-                border: none;
-                padding: 5px;
-                font-size: 20px;
-            }}
-            QPushButton:hover {{
-                background-color: orange;
-            }}
-        """)
-        button.clicked.connect(self.open_settings_dialog)  # Connect to show_settings_dialog method
-        button.setFixedSize(80, 40)
-        return button
 
     def create_date_label(self):
         """Create and return the date label."""
@@ -377,35 +514,12 @@ class BigClockApp(QWidget):
     def create_time_label(self):
         """Create and return the time label."""
         label = QLabel(self)
-        label.setFont(self.font)
-        if self.config.use_24h_format: # the "am" and "pm", if used, cause the text to be too large and get clipped on edges. 
+        if self.config.toggle_24h: # the "am" and "pm", if used, cause the text to be too large and get clipped on edges. 
             label.setStyleSheet(f"color: {self.config.clock_text_color.name()}; font-family: {self.font.family()}; font-size: 480px;")
         else:
             label.setStyleSheet(f"color: {self.config.clock_text_color.name()}; font-family: {self.font.family()}; font-size: 390px;")
         label.setAlignment(Qt.AlignCenter)
         return label
-
-    def create_close_button(self):
-        """Create and return the close button."""
-        button = QPushButton("X", self)
-        button.setFont(QFont('Arial', 16))
-        button.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {self.config.button_color.name()};
-                color: red;
-                border: none;
-                padding: 5px;
-                font-size: 20px;
-            }}
-            QPushButton:hover {{
-                background-color: red;
-            }}
-        """)
-        button.clicked.connect(QApplication.quit)
-        #button.clicked.connect(lambda: sys.exit(0)) 
-  
-        button.setFixedSize(40, 40)
-        return button
 
     def set_background_color(self, color):
         """Set the background color of the widget."""
@@ -421,7 +535,7 @@ class BigClockApp(QWidget):
             if FONT:
                 self.font = QFont(FONT)
             elif FONT_PATH:
-                font_id = font_db.addApplicationFont(FONT_PATH)
+                font_id = font_db.addApplicationFont(str(FONT_PATH))
                 if font_id == -1:
                     raise RuntimeError("Failed to load font")
                 font_family = font_db.applicationFontFamilies(font_id)[0]
@@ -433,34 +547,31 @@ class BigClockApp(QWidget):
             self.font = QFont('Helvetica')
         # Set a fixed font size that won't change
         self.font.setPointSize(480)
-        
+            
     def setup_layouts(self):
         """Set up the layout for the widget with a fixed size to fill the second monitor."""
-        top_layout = QHBoxLayout()
-        top_layout.addWidget(self.close_button, alignment=Qt.AlignLeft | Qt.AlignTop)
-        
-        # Add the settings button next to the close button
-        top_layout.addWidget(self.settings_button, alignment=Qt.AlignLeft | Qt.AlignTop)
-
-        # Add a spacer between the buttons and the date label
-        top_layout.addItem(QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
-        top_layout.addWidget(self.date_label, alignment=Qt.AlignCenter)
-        top_layout.addItem(QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
-        
         # Main clock layout
         clock_layout = QVBoxLayout()
-        clock_layout.addLayout(top_layout)
+        clock_layout.setContentsMargins(0, 0, 0, 0)
+        clock_layout.setSpacing(0)
+
+        # Add the CustomTitleBar at the top
+        clock_layout.addWidget(self.titleBar)
+
+        # Add the date label
+        clock_layout.addWidget(self.date_label, alignment=Qt.AlignCenter)
+
+        # Add the time label
         clock_layout.addWidget(self.time_label, alignment=Qt.AlignCenter)
 
         # Add spacers to center the clock
-        clock_layout.addItem(QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding))
+        clock_layout.addStretch()
 
         # Main layout
         main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
         main_layout.addLayout(clock_layout)
-
-        # Set main layout margins to prevent items being too close to edges
-        main_layout.setContentsMargins(20, 20, 20, 20)
 
         # Apply the layout
         self.setLayout(main_layout)
@@ -468,7 +579,7 @@ class BigClockApp(QWidget):
     def update_time(self):
         """Update the displayed time and date."""
         now = datetime.now()
-        if self.config.use_24h_format:
+        if self.config.toggle_24h:
             time_format = "%H:%M:%S"
         else:
             time_format = "%I:%M:%S %p"
@@ -523,7 +634,7 @@ class BigClockApp(QWidget):
         if settings_dialog.exec_() == QDialog.Accepted:
             # Update the config with new settings
             self.config.flash_duration = settings_dialog.flash_duration_input.value()
-            self.config.use_24h_format = settings_dialog.use_24h_checkbox.isChecked()
+            self.config.toggle_24h = settings_dialog.toggle_24h.isChecked()
             self.config.flash_regularity = int(settings_dialog.flash_regularity_combo.currentText())
             self.config.audio_path = settings_dialog.audio_input.text()
             self.config.volume_level = settings_dialog.volume_slider.value()
@@ -536,50 +647,31 @@ class BigClockApp(QWidget):
             self.set_background_color(self.config.background_color)
             self.date_label.setStyleSheet(f"color: {self.config.clock_text_color.name()}; font-family: {self.font.family()}; font-size: 42px;")
             self.time_label.setStyleSheet(f"color: {self.config.clock_text_color.name()}; font-family: {self.font.family()}; font-size: 480px;")
-            self.close_button.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {self.config.button_color.name()};
-                    color: white;
-                    border: none;
-                    padding: 5px;
-                }}
-                QPushButton:hover {{
-                    background-color: red;
-                }}
-            """)
-            self.settings_button.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {self.config.button_color.name()};
-                    color: white;
-                    border: none;
-                    padding: 5px;
-                }}
-                QPushButton:hover {{
-                    background-color: green;
-                }}
-            """)
+         
     def open_settings_dialog(self):
-        """Close the main window and open the settings dialog."""
-        # Close the main window
-        self.main_window.close()
-
+        """Display the settings dialog and update the config if settings are modified."""
+        logging.info("open_settings_dialog called")  # Added print statement
         # Display the settings dialog
         settings_dialog = SettingsDialog(self)
         if settings_dialog.exec_() == QDialog.Accepted:
             # Update the config with new settings
             self.config.flash_duration = settings_dialog.flash_duration_input.value()
-            self.config.use_24h_format = settings_dialog.use_24h_checkbox.isChecked()
+            self.config.toggle_24h = settings_dialog.toggle_24h_clock.isChecked()
             self.config.flash_regularity = int(settings_dialog.flash_regularity_combo.currentText())
             self.config.audio_path = settings_dialog.audio_input.text()
-            self.config.volume_level = settings_dialog.volume_slider.value()
-            self.config.background_color = settings_dialog.background_color
-            self.config.flash_color = settings_dialog.flash_color
-            self.config.clock_text_color = settings_dialog.clock_text_color
-            self.config.button_color = settings_dialog.button_color
+            self.config.volume_level = settings_dialog.volume_slider.value() / 100.0
+            self.config.background_color = settings_dialog.config.background_color
+            self.config.flash_color = settings_dialog.config.flash_color
+            self.config.clock_text_color = settings_dialog.config.clock_text_color
+            self.config.button_color = settings_dialog.config.button_color
 
-            # Reopen the main window with updated settings
-            new_window = MainWindow()
-            new_window.show()
+            # Apply updated settings dynamically
+            self.set_background_color(self.config.background_color)
+            self.date_label.setStyleSheet(f"color: {self.config.clock_text_color.name()}; font-family: {self.font.family()}; font-size: 42px;")
+            self.time_label.setStyleSheet(f"color: {self.config.clock_text_color.name()}; font-family: {self.font.family()}; font-size: 480px;")
+
+            # Update volume in wiggle flash
+            self.main_window.update_audio_volume()
 
 # --------------------------------------------------
 
@@ -598,10 +690,9 @@ class WiggleFlash(QWidget):
         palette = self.palette()
         palette.setColor(QPalette.Window, QColor("white"))
         self.setPalette(palette)
-
-        # Set up font
-        self.font = QFont('Comic Sans MS', 144)  # Adjust size as needed
-        self.setFont(self.font)
+        
+                # Set up font
+        self.myfonts = { "Bondoni 72", "Charlkboard", "Futura", "Herculanum", "Luminari", "Silom" }
 
         # Start the timer for animation
         self.timer.start(60, self)  # This registers a timer event with the Qt event loop
@@ -609,14 +700,11 @@ class WiggleFlash(QWidget):
         # Set up audio player
         self.player = QMediaPlayer()
         self.player.setMedia(QMediaContent(QUrl.fromLocalFile(self.config.audio_path)))
-        if self.config.volume_level >1:
-            self.player.setVolume(int(self.config.volume_level))
-        else:
-            self.player.setVolume(int(self.config.volume_level * 100))  
-
+        self.player.setVolume(int(self.config.volume_level * 100))  # Convert to integer percentage
+   
     def set_hour(self, hour):
         """Set the text to display the current hour and play audio."""
-        if self.config.use_24h_format:
+        if self.config.toggle_24h:
             self.text = f"IT'S NOW {hour:02d}:00, BITCH!"
         else:
             am_pm = "AM" if hour < 12 else "PM"
@@ -629,7 +717,8 @@ class WiggleFlash(QWidget):
     def paintEvent(self, event):
         """Paint the wiggling text."""
         painter = QPainter(self)
-        painter.setFont(self.font)
+        painter.setFamily(random.choice(self.myfonts))
+        painter.setPointsize
         metrics = painter.fontMetrics()
 
         # Center the text horizontally and vertically
@@ -660,25 +749,89 @@ class WiggleFlash(QWidget):
             self.update()  # Trigger a repaint
         else:
             super().timerEvent(event)
+ class CustomTitleBar(QWidget):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setAutoFillBackground(True)
+        self.setBackgroundRole(QPalette.ColorRole.Highlight)
+        
+        self.old_pos = None
+        
+        title_bar_layout = QHBoxLayout(self)
+        title_bar_layout.setContentsMargins(1, 1, 1, 1)
+        title_bar_layout.setSpacing(2)
+        
+        self.title = QLabel(f"{self.__class__.__name__}", self)
+        self.title.setStyleSheet(
+            """font-weight: bold;
+               border: 2px solid black;
+               border-radius: 12px;
+               margin: 2px;
+            """
+        )
+        self.title.setAlignment(Qt.AlignCenter)
+        title = parent.windowTitle()
+        if title:
+            self.title.setText(title)
+        title_bar_layout.addWidget(self.title)
 
+        # Spacer to push buttons to the right
+        title_bar_layout.addStretch()
+
+        # Settings button
+        self.settings_button = QToolButton(self)
+        settings_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView)
+        self.settings_button.setIcon(settings_icon)
+        self.settings_button.clicked.connect(parent.open_settings_dialog)
+
+        # Close button
+        self.close_button = QToolButton(self)
+        close_icon = self.style().standardIcon(
+            QStyle.StandardPixmap.SP_TitleBarCloseButton
+        )
+        self.close_button.setIcon(close_icon)
+        self.close_button.clicked.connect(QApplication.quit)
+        
+        buttons = [
+            self.settings_button,
+            self.close_button,
+        ]
+        for button in buttons:
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            button.setFixedSize(QSize(28, 28))
+            button.setStyleSheet(
+                """QToolButton { border: 2px solid white;
+                                 border-radius: 12px;
+                                }
+                """
+            )
+            title_bar_layout.addWidget(button)
+            
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.old_pos = event.globalPos()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() == Qt.LeftButton:
+            delta = QPoint(event.globalPos() - self.old_pos)
+            self.window().move(self.window().pos() + delta)
+            self.old_pos = event.globalPos()
+            event.accept()
+            
+            
 # --------------------------------------------------
 
-if __name__ == '__main__':
-    app = QApplication(sys.argv)
+if __name__ == "__main__":
+    app = QApplication(sys.argv)  # Create the application instance
+
+    # Create the settings dialog and show it
     settings_dialog = SettingsDialog()
     if settings_dialog.exec_() == QDialog.Accepted:
-        config = AppConfig()
-        # Update the config with new settings
-        config.flash_duration = settings_dialog.flash_duration_input.value()
-        config.flash_regularity = int(settings_dialog.flash_regularity_combo.currentText())
-        config.audio_path = settings_dialog.audio_input.text()
-        config.volume_level = settings_dialog.volume_slider.value()
-        config.background_color = settings_dialog.background_color
-        config.flash_color = settings_dialog.flash_color
-        config.clock_text_color = settings_dialog.clock_text_color
-        config.button_color = settings_dialog.button_color
-        config.use_24h_format = settings_dialog.use_24h_checkbox.isChecked()
-        
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec_())
+        # User accepted the settings, proceed to show the main window
+        main_window = MainWindow()
+        main_window.show()
+        sys.exit(app.exec_())
+    else:
+        # User canceled the settings, exit the application
+        sys.exit()
