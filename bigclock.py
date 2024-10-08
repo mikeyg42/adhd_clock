@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import (
     QTimer, Qt, QBasicTimer, QPropertyAnimation, QEasingCurve, 
-    pyqtProperty, QUrl, QCoreApplication, QSize, QPoint
+    pyqtProperty, QUrl, QCoreApplication, QSize, QPoint, pyqtSignal
 )
 from PyQt5.QtGui import (
     QFont, QFontDatabase, QPainter, QColor, QPalette
@@ -73,8 +73,8 @@ class AppConfig:
     def init_settings(self):
         """Initialize default settings."""
         self.toggle_24h = True
-        self.flash_duration = 2.5
-        self.flash_regularity = 15
+        self.flash_duration = 9
+        self.flash_regularity = 1
         self.audio_path = str(DEFAULT_AUDIO_PATH)  # Store as string
         self.volume_level = 0.3
         self.background_color = QColor(0, 0, 0)
@@ -446,17 +446,11 @@ class MainWindow(QWidget):
     def update_audio_volume(self):
         self.wiggle_flash.player.setVolume(int(self.config.volume_level * 100))
 
-def determine_flash_length():
-    # round down to the nearest whole number
-    int_flash_dur = int(DEFAULT_FLASH_DURATION)
-    numFlashes = int_flash_dur*2
-    extratime = DEFAULT_FLASH_DURATION/numFlashes-500
-    flash_dur = 500+extratime 
-    return (int(numFlashes), int(flash_dur))
-
 class BigClockApp(QWidget):
     """A fullscreen clock application with a customizable display."""
-
+    
+    flashColorChanged = pyqtSignal()
+    
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
         self.main_window = main_window
@@ -475,12 +469,12 @@ class BigClockApp(QWidget):
         self._flash_color = QColor(self.config.background_color)
             
         # Parse configs set by user and determine the number of flashes and their duration
-        num_and_duration = determine_flash_length()
+        self.determine_flash_length()
         
         # Set up flash animation
         self.flash_animation = QPropertyAnimation(self, b"flash_color")
-        self.flash_animation.setDuration(num_and_duration[1])  # 500ms ish
-        self.flash_animation.setLoopCount(num_and_duration[0])  # Even number of flashes
+        self.flash_animation.setDuration(self.flashDur)  # 500ms ish
+        self.flash_animation.setLoopCount(self.numFlashes)  # Even number of flashes
         self.flash_animation.setStartValue(self.config.background_color)
         self.flash_animation.setEndValue(self.config.flash_color)
         self.flash_animation.setEasingCurve(QEasingCurve.InOutQuad)
@@ -573,9 +567,15 @@ class BigClockApp(QWidget):
         main_layout.setSpacing(0)
         main_layout.addLayout(clock_layout)
 
-        # Apply the layout
-        self.setLayout(main_layout)
-        
+
+    def determine_flash_length(self):
+        # round down to the nearest whole number
+        int_flash_dur = int(self.config.flash_duration)
+        numFlashes = int_flash_dur*2
+        flashtime = (self.config.flash_duration * 1000)/numFlashes
+        self.numFlashes = max(int(numFlashes), 1)
+        self.flashDur = max(int(flashtime), 1)
+     
     def update_time(self):
         """Update the displayed time and date."""
         now = datetime.now()
@@ -594,25 +594,26 @@ class BigClockApp(QWidget):
             self.start_flash()  # Regular flashing
                           
     def start_flash(self):
+        self.determine_flash_length()  # Recalculate durations based on current settings
+        
+        logging.info(f"Starting flash with {self.numFlashes} flashes of {self.flashDur} ms each.")
+        self.flash_animation.setDuration(self.flashDur)
+        self.flash_animation.setLoopCount(self.numFlashes)
         self.flash_animation.setStartValue(self.config.background_color)
         self.flash_animation.setEndValue(self.config.flash_color)
-        self.flash_animation.setLoopCount(6)  # Ensure an even number of flashes
         self.flash_animation.start()
-        try:
-            flash_duration_ms = int(self.config.flash_duration * 1000)  # Convert to integer milliseconds
-            self.flash_timer.start(flash_duration_ms)
-        except ValueError:
-            logging.error(f"Invalid FLASH_DURATION: {self.config.flash_duration}. Using default of 2500ms.")
-            self.flash_timer.start(2500)  # Default to 2.5 seconds if conversion fails
-    
+        
+        # Total duration of the flashing sequence
+        total_flash_duration_ms = int(self.config.flash_duration * 1000)
+        self.flash_timer.start(total_flash_duration_ms)
+        
     def stop_flash(self):
         """Stop the flashing animation and reset the background."""
         self.flash_animation.stop()
         self.flash_timer.stop()
-        self._flash_color = QColor(self.config.background_color)
-        self.update()  # Trigger a repaint
+        self.flash_color = self.config.background_color  # Use the property setter
 
-    @pyqtProperty(QColor)
+    @pyqtProperty(QColor, notify=flashColorChanged)
     def flash_color(self):
         return self._flash_color
 
@@ -620,13 +621,14 @@ class BigClockApp(QWidget):
     def flash_color(self, color):
         if self._flash_color != color:
             self._flash_color = color
+            self.flashColorChanged.emit()  # Emit the notify signal
             self.update()  # Trigger a repaint
 
     def paintEvent(self, event):
         """Custom paint event to handle background color changes."""
         painter = QPainter(self)
         painter.fillRect(self.rect(), self._flash_color)
-  
+        
     # triggered when the settings button is clicked
     def show_settings_dialog(self):
         """Display the settings dialog and update the config if settings are modified."""
@@ -716,11 +718,15 @@ class WiggleFlash(QWidget):
 
     def paintEvent(self, event):
         """Paint the wiggling text."""
-        painter = QPainter(self)
-        painter.setFamily(random.choice(self.myfonts))
-        painter.setPointsize
+        font = QFont()
+        font.setFamily(random.choice(self.myfonts))
+        font.setPointSize(180)
+        font.setBold(False)
+        font.setItalic(False)
+        
+        painter = QPainter()
+        painter.setFont(font)
         metrics = painter.fontMetrics()
-
         # Center the text horizontally and vertically
         x = (self.width() - metrics.horizontalAdvance(self.text)) // 2
         y = (self.height() + metrics.ascent() - metrics.descent()) // 2
@@ -749,7 +755,8 @@ class WiggleFlash(QWidget):
             self.update()  # Trigger a repaint
         else:
             super().timerEvent(event)
- class CustomTitleBar(QWidget):
+            
+class CustomTitleBar(QWidget):
     def __init__(self, parent):
         super().__init__(parent)
         self.setAutoFillBackground(True)
