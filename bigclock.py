@@ -55,6 +55,8 @@ RESOURCE_PATH = pathlib.Path(resource_path('resources'))
 FONT_PATH = RESOURCE_PATH / 'bayer_universal_type.ttf'
 DEFAULT_AUDIO_PATH = RESOURCE_PATH / 'wiggle_wiggle_LMFAO_clip.mp3'
 
+WINDOW_AMT_OCCUPIED=0.22
+
 # --------------------------------------------------
 
 # Configure logging
@@ -97,7 +99,7 @@ class SettingsDialog(QDialog):
         self.config = AppConfig()
 
         # Set the dialog on the primary screen (Screen 0)
-        # self.move_to_primary_screen()
+        self.move_to_primary_screen()
 
         # create a dictionary to store the colors of the buttons
         self.color_buttons = {}
@@ -233,9 +235,12 @@ class SettingsDialog(QDialog):
     
     def init_sound_effect(self):
         """Dynamically load all .wav files from the resources directory for volume slider feedback."""
-
+        
+        # Path to the resources directory
+        resources_dir = pathlib.Path(resource_path('resources'))
+        
         # List of beep sound files (only .wav files)
-        self.beep_paths = list(RESOURCE_PATH.glob('*.wav'))
+        self.beep_paths = list(resources_dir.glob('*.wav'))
 
         # Clear the sound effects list before loading
         self.sound_effects = []
@@ -248,26 +253,51 @@ class SettingsDialog(QDialog):
                 sound.setLoopCount(1)  # Play the beep once per trigger
                 sound.setVolume(self.config.volume_level)  # Initial volume
                 self.sound_effects.append(sound)
-                #logging.info(f"Beep sound loaded from: {path}")
+                logging.info(f"Beep sound loaded from: {path}")
             else:
                 logging.error(f"Beep sound file not found: {path}")
 
         # Initialize a timer to debounce slider movements
         self.beep_timer = QTimer()
         self.beep_timer.setSingleShot(True)
-        self.beep_timer.timeout.connect(self.play_random_beep)
+        self.beep_timer.timeout.connect(self.play_beep)
         
-    def play_random_beep(self):
-        """Play a random beep sound based on the current volume."""
-        if self.sound_effects:
-            beep_sound = random.choice(self.sound_effects)  # Randomly select a sound effect
-            beep_sound.setVolume(self.current_volume)  # Adjust volume based on slider
-            beep_sound.stop()  # Stop any currently playing beep to prevent overlap
-            beep_sound.play()
-            logging.info(f"Playing beep sound at volume: {self.current_volume}")
-        else:
-            logging.warning("No beep sounds available to play.")
+        # Timer to reset the sound effect after 15 seconds
+        self.reset_sound_timer = QTimer()
+        self.reset_sound_timer.setSingleShot(True)
+        self.reset_sound_timer.timeout.connect(self.reset_beep_sound)
+        
+        # Track the last played sound
+        self.current_beep_sound = None
 
+    def play_beep(self):
+        """Play the currently active beep sound."""
+        if self.current_beep_sound:
+            self.current_beep_sound.setVolume(self.current_volume)
+            self.current_beep_sound.stop()  # Stop any currently playing beep to prevent overlap
+            self.current_beep_sound.play()
+
+    def play_random_beep(self):
+        """Select and play a new random beep sound, locking it for 15 seconds."""
+        
+        # If no current beep sound or the reset timer is not running, choose a new sound
+        if not self.current_beep_sound or not self.reset_sound_timer.isActive():
+            available_sounds = [sound for sound in self.sound_effects if sound != self.current_beep_sound]
+            if available_sounds:
+                self.current_beep_sound = random.choice(available_sounds)
+                logging.info(f"Selected new beep sound.")
+            else:
+                logging.warning("No alternative beep sounds available.")
+            
+            # Start the 15-second timer to allow new random selection after this period
+            self.reset_sound_timer.start(15000)  # 15 seconds
+        
+        # Play the current beep sound
+        self.play_beep()
+
+    def reset_beep_sound(self):
+        """Reset the beep sound after 15 seconds, allowing a new random one to be selected."""
+        self.current_beep_sound = None
 
     def create_color_picker(self, layout, label_text, color, attribute_name):
         layout.addWidget(QLabel(label_text))
@@ -312,16 +342,7 @@ class SettingsDialog(QDialog):
         self.config.update_setting('toggle_24h', self.toggle_24h_clock.isChecked())
         # Colors are already updated in choose_color
         super().accept()
-
-    def reject(self):
-        """Prompt user before closing the application when 'Cancel' is pressed."""
-        reply = QMessageBox.question(
-            self, 'Confirm Exit',
-            "Are you sure you want to exit=?",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
-        )
-        if reply == QMessageBox.Yes:
-            QApplication.quit()
+            
     def reject(self):
         """Prompt user before closing the settings dialog when 'Cancel' is pressed."""
         reply = QMessageBox.question(
@@ -434,14 +455,23 @@ class MainWindow(QWidget):
         """Move the window to the extended monitor if available."""
         desktop = QDesktopWidget()
         screen_count = desktop.screenCount()
-
+        logging.info(f"Detected {screen_count} screens.")
         if screen_count > 1:
             extended_screen = desktop.screenGeometry(1)
             self.setGeometry(extended_screen)
-            self.clock_app.setFixedSize(extended_screen.width(), extended_screen.height())
-            self.wiggle_flash.setFixedSize(extended_screen.width(), extended_screen.height())
+            #self.clock_app.setFixedSize(extended_screen.width(), extended_screen.height())
+            #self.wiggle_flash.setFixedSize(extended_screen.width(), extended_screen.height())
+        elif screen_count == 1:
+            # Only the main monitor is available
+            main_screen = desktop.screenGeometry(0)
+
+            wdth = int(main_screen.width())  # Removed comma
+            hght = int(main_screen.height())
+            self.setGeometry(0, int(hght-(WINDOW_AMT_OCCUPIED*hght)), wdth, int(WINDOW_AMT_OCCUPIED*hght))  # Corrected method call
+            #self.clock_app.setFixedSize(main_screen.width(), int(WINDOW_AMT_OCCUPIED*main_screen.height()))  # Use main_screen
+            #self.wiggle_flash.setFixedSize(main_screen.width(), main_screen.height())  # Use main_screen
         else:
-            self.showMaximized()
+            logging.error("No screens detected. Exiting application.")
             
     def update_audio_volume(self):
         self.wiggle_flash.player.setVolume(int(self.config.volume_level * 100))
@@ -566,6 +596,9 @@ class BigClockApp(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
         main_layout.addLayout(clock_layout)
+        
+        # Apply the layout to the widget
+        self.setLayout(main_layout)
 
 
     def determine_flash_length(self):
@@ -693,7 +726,7 @@ class WiggleFlash(QWidget):
         palette.setColor(QPalette.Window, QColor("white"))
         self.setPalette(palette)
         
-                # Set up font
+        # Set up font
         self.myfonts = { "Bondoni 72", "Charlkboard", "Futura", "Herculanum", "Luminari", "Silom" }
 
         # Start the timer for animation
