@@ -79,7 +79,7 @@ class AppConfig:
         self.toggle_24h = True
         self.flash_duration = 10
         self.flash_regularity = 15
-        self.audio_path = str(DEFAULT_AUDIO_PATH)  # Store as string
+        self.audio_path = str(DEFAULT_AUDIO_PATH)
         self.volume_level = 0.3
         self.background_color =DEFAULT_BACKGROUND_COLOR
         self.flash_color = DEFAULT_FLASH_COLOR
