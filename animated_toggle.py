@@ -1,6 +1,6 @@
 from PyQt5.QtCore import Qt, QSize, QPoint, QPointF, QRectF, QEasingCurve, QPropertyAnimation, QParallelAnimationGroup, pyqtSlot, pyqtProperty
 from PyQt5.QtWidgets import QCheckBox
-from PyQt5.QtGui import QColor, QBrush, QPen, QPainter
+from PyQt5.QtGui import QColor, QFont, QBrush, QPen, QPainter, QFontDatabase, QFontMetrics
 
 class AnimatedToggle(QCheckBox):
     """Custom QCheckBox widget that behaves like a toggle switch with animations."""
@@ -40,15 +40,6 @@ class AnimatedToggle(QCheckBox):
         self.animations_group.addAnimation(self.pulse_anim)
 
         self.stateChanged.connect(self.setup_animation)
-            
-    # def make_less_saturated_and_lighter(self, color):
-    #     h, s, v, a = color.getHsv()
-    #     new_saturation = int(max(s / 1.6, 1)) # unchecked should be higher value and lower saturation
-    #     newColor = QColor()
-    #     new_value = int(min(v * 1.6, 255))
-    #     print(f"hue = {h}, new value = {new_value} and new_saturation = {new_saturation}")
-    #     newColor.setHsv(h, new_saturation, new_value, 0)
-    #     return newColor
   
     def sizeHint(self):
         return QSize(40,30)
@@ -76,7 +67,7 @@ class AnimatedToggle(QCheckBox):
         # Adjust the rectangle dimensions based on these margins
         inner_width = contRect.width() - left_margin - right_margin
         inner_height = contRect.height() - top_margin - bottom_margin
-        handle_radius = round(0.4 * inner_height) 
+        handle_radius = round(0.4 * inner_height)
         trailLength = contRect.width() - 4 * handle_radius
         xPos = contRect.x() + 2 * handle_radius + trailLength * self._handle_position
 
@@ -86,57 +77,97 @@ class AnimatedToggle(QCheckBox):
         p.setPen(self._transparent_pen)
 
         # Draw the bar (with fixed margins)
-        bar_rect = QRectF(left_margin, top_margin, inner_width - handle_radius, 0.5 * inner_height)
-        bar_rect.moveCenter(QPointF(left_margin + inner_width / 2, top_margin + inner_height / 2))  # Ensure the bar is centered
-        rounding = bar_rect.height() / 2  # makes for pill-like appearance
-        bar_brush = QBrush(self.bar_color_checked if self.isChecked() else self.bar_color_unchecked)
+        bar_rect = QRectF(
+            left_margin,
+            top_margin,
+            inner_width - handle_radius,
+            0.5 * inner_height
+        )
+        bar_rect.moveCenter(
+            QPointF(
+                left_margin + inner_width / 2,
+                top_margin + inner_height / 2
+            )
+        )
+        rounding = bar_rect.height() / 2  # Makes for pill-like appearance
+        bar_brush = QBrush(
+            self.bar_color_checked if self.isChecked() else self.bar_color_unchecked
+        )
         p.setBrush(bar_brush)
         p.drawRoundedRect(bar_rect, rounding, rounding)
 
         # Draw pulse animation (smaller pulse)
         if self.pulse_anim.state() == QPropertyAnimation.Running:
-            pulse_brush = QBrush(self.pulse_checked_color if self.isChecked() else self.pulse_unchecked_color)
+            pulse_brush = QBrush(
+                self.pulse_checked_color if self.isChecked() else self.pulse_unchecked_color
+            )
             p.setBrush(pulse_brush)
-            p.drawEllipse(QPointF(xPos, bar_rect.center().y()), self._pulse_radius, self._pulse_radius)
+            p.drawEllipse(
+                QPointF(xPos, bar_rect.center().y()),
+                self._pulse_radius,
+                self._pulse_radius
+            )
 
         # Draw the handle (smaller handle)
         handle_brush = QBrush(self.handle_color)
         p.setBrush(handle_brush)
-        p.drawEllipse(QPointF(xPos, bar_rect.center().y()), handle_radius, handle_radius)
+        p.drawEllipse(
+            QPointF(xPos, bar_rect.center().y()),
+            handle_radius,
+            handle_radius
+        )
 
-        # Draw labels (24hr / 12hr) at handle location
-        font = p.font()
-        
+        # Draw labels (24hr / 12hr) at handle location using the same painter 'p'
+
+        # Setup font
+        font_name = "Silom"
+        font_db = QFontDatabase()
+        if font_name in font_db.families():
+            f = QFont(font_name)
+        else:
+            f = QFont()
+            f.setStyleHint(QFont.StyleHint.SansSerif)
+            
+        f.setWeight(65)  # Set font weight (0-99)
+        f.setStretch(105)  # 100 is normal stretch
+        f.setPointSize(16)  # Set font size
+        f.setStyleStrategy(QFont.StyleStrategy.PreferOutline)
+
+        p.setFont(f)  # Set the font on the painter
+
         # Logic to enlarge and change color for active label
         if self.isChecked():
             # 24hr label active
             p.setPen(QPen(QColor(50, 250, 250)))  # Cyan color
-            font.setPointSize(12)  # Larger font size when active
-            p.setFont(font)
-            font.setBold(True)
-            p.drawText(QPointF(xPos - 10, bar_rect.center().y() + 5), "24hr")
-            
+            font_metrics = QFontMetrics(f)
+            text_width = font_metrics.width("24hr")
+            p.drawText(
+                QPointF(xPos - text_width+5, bar_rect.center().y() + 5),
+                "24hr"
+            )
+
             # 12hr label inactive (transparent)
             p.setPen(QPen(QColor(0, 0, 0, 0)))  # Transparent color
-            font.setPointSize(12)  # Default font size
-            p.setFont(font)
-            p.drawText(QPointF(contRect.x() + 5 +handle_radius, bar_rect.center().y() + 5), "12hr")
+            p.drawText(
+                QPointF(contRect.x() + 5 + handle_radius, bar_rect.center().y() + 5),
+                "12hr"
+            )
         else:
             # 12hr label active
             p.setPen(QPen(QColor(50, 250, 250)))  # Cyan color
-            font.setPointSize(10)  # Larger font size when active
-            p.setFont(font)
-            font.setBold(True)
-            p.drawText(QPointF(xPos - 10, bar_rect.center().y() + 5), "12hr")
-            
+            p.drawText(
+                QPointF(xPos - 10, bar_rect.center().y() + 5),
+                "12hr"
+            )
+
             # 24hr label inactive (transparent)
             p.setPen(QPen(QColor(0, 0, 0, 0)))  # Transparent color
-            font.setPointSize(10)  # Default font size
-            p.setFont(font)
-            p.drawText(QPointF(contRect.x() + 5 + handle_radius, bar_rect.center().y() + 5), "24hr")
-
+            p.drawText(
+                QPointF(contRect.x() + 5 + handle_radius, bar_rect.center().y() + 5),
+                "24hr"
+            )
         p.end()
-
+    
     @pyqtProperty(float)
     def handle_position(self):
         return self._handle_position

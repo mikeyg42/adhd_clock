@@ -6,16 +6,16 @@ import pathlib
 from datetime import datetime
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QDesktopWidget,
-    QVBoxLayout, QHBoxLayout, QSizePolicy, QStackedLayout,
+    QVBoxLayout, QHBoxLayout, QSizePolicy, QStackedLayout, QLayout,
     QSlider, QGroupBox, QLineEdit, QDialog, QDialogButtonBox, QFileDialog, 
     QColorDialog,QDoubleSpinBox, QStyle, QToolButton,QComboBox, QMessageBox
 )
 from PyQt5.QtCore import (
-    QTimer, Qt, QBasicTimer, QPropertyAnimation, QEasingCurve, 
+    QTimer, Qt, QBasicTimer, QPropertyAnimation, QEasingCurve, QEvent,
     pyqtProperty, QUrl, QCoreApplication, QSize, QPoint, pyqtSignal
 )
 from PyQt5.QtGui import (
-    QFont, QFontDatabase, QPainter, QColor, QPalette
+    QFont, QFontDatabase, QPainter, QColor, QPalette, QFontMetrics
 )
 from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent, QSoundEffect
 from animated_toggle import AnimatedToggle
@@ -25,18 +25,18 @@ from animated_toggle import AnimatedToggle
 QCoreApplication.setAttribute(Qt.AA_EnableHighDpiScaling)
 
 # Configuration Constants - uncustomizable
-BUTTON_COLOR = "purple"
 BUTTON_TEXT_COLOR = "white"
-WIGGLE_BACKGROUND_COLOR = "white"
+WIGGLE_BACKGROUND_COLOR = QColor(244, 246, 243)  # White
 
-BUTTON_COLORS = [QColor(255, 160, 255), QColor(166, 255, 240)]
+# buttons in the settings dialog
+BUTTON_COLORS = [QColor(100, 255, 55), QColor(255, 50, 50)] # first is ACCEPT = GREEN , second is CANCEL = RED
 BUTTON_HOVER_COLORS = [QColor(160, 20, 160), QColor(0, 175, 150)]
 
 # Global Defaults for Colors
-DEFAULT_BACKGROUND_COLOR = QColor(0, 0, 0)  # Black
-DEFAULT_FLASH_COLOR = QColor(255, 0, 0)      # Red
-DEFAULT_CLOCK_TEXT_COLOR = QColor(255, 255, 255)  # White
-DEFAULT_BUTTON_COLOR = QColor(128, 0, 128)    # Purple
+DEFAULT_BACKGROUND_COLOR = QColor(45, 55, 55)  # Black
+DEFAULT_FLASH_COLOR = QColor(255, 40, 40)      # Red
+DEFAULT_CLOCK_TEXT_COLOR = QColor(245, 245, 243)  # White
+DEFAULT_TOOLBAR_COLOR = QColor(100, 180, 230) #light blue
 
 DEFAULT_FLASH_DURATION = 5  # in seconds
 DEFAULT_FLASH_REGULARITY = 15  # in minutes
@@ -55,7 +55,9 @@ RESOURCE_PATH = pathlib.Path(resource_path('resources'))
 FONT_PATH = RESOURCE_PATH / 'bayer_universal_type.ttf'
 DEFAULT_AUDIO_PATH = RESOURCE_PATH / 'wiggle_wiggle_LMFAO_clip.mp3'
 
-WINDOW_AMT_OCCUPIED=0.22
+WINDOW_AMT_OCCUPIED=0.15 # the window will occupy this amount of the screen height(value between 0 and 1) and span the screen width
+
+DEFAULT_RELATIVE_SIZE_TIME_VS_DATE = 12 # this means the time will be 9x the size of the date
 
 # --------------------------------------------------
 
@@ -75,14 +77,15 @@ class AppConfig:
     def init_settings(self):
         """Initialize default settings."""
         self.toggle_24h = True
-        self.flash_duration = 9
-        self.flash_regularity = 1
+        self.flash_duration = 10
+        self.flash_regularity = 15
         self.audio_path = str(DEFAULT_AUDIO_PATH)  # Store as string
         self.volume_level = 0.3
-        self.background_color = QColor(0, 0, 0)
-        self.flash_color = QColor(255, 0, 0)
-        self.clock_text_color = QColor(255, 255, 255)
-        self.button_color = QColor(128, 0, 128)  # Refers to the two pushbuttons on the main clock screen
+        self.background_color =DEFAULT_BACKGROUND_COLOR
+        self.flash_color = DEFAULT_FLASH_COLOR
+        self.clock_text_color = DEFAULT_CLOCK_TEXT_COLOR
+        self.toolbar_color = DEFAULT_TOOLBAR_COLOR
+        self.relativeFontSize = DEFAULT_RELATIVE_SIZE_TIME_VS_DATE
 
     def update_setting(self, key, value):
         """Update a setting."""
@@ -92,7 +95,7 @@ class AppConfig:
 class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Clock Settings")
+        self.setWindowTitle("ADHD Clock Settings")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
 
         # Access the singleton instance    
@@ -136,7 +139,6 @@ class SettingsDialog(QDialog):
         flash_group.setLayout(flash_layout)
         main_layout.addWidget(flash_group)
 
-
         # Time Format Group
         time_format_group = QGroupBox("Time Format")
         time_format_layout = QHBoxLayout()
@@ -178,7 +180,6 @@ class SettingsDialog(QDialog):
         self.volume_slider.valueChanged.connect(self.update_volume_label)
         self.volume_slider.valueChanged.connect(self.debounce_play_beep)
 
-
         # Color Settings Group
         color_group = QGroupBox("Color Settings")
         color_layout = QVBoxLayout()
@@ -192,8 +193,8 @@ class SettingsDialog(QDialog):
         # Clock Text Color
         self.create_color_picker(color_layout, "Clock Text Color", self.config.clock_text_color, "clock_text_color")
 
-        # Button Color
-        self.create_color_picker(color_layout, "Button Color", self.config.button_color, "button_color")
+        # Toolbar Color
+        self.create_color_picker(color_layout, "Toolbar Color", self.config.toolbar_color, "toolbar_color")
 
         color_group.setLayout(color_layout)
         main_layout.addWidget(color_group)
@@ -213,8 +214,8 @@ class SettingsDialog(QDialog):
     def update_flash_regularity_options(self, number):
         """Populate the combo box with divisors of the given number."""
         divisors = [i for i in range(1, number + 1) if number % i == 0]  # Divisors of 60
-        self.flash_regularity_combo.clear()  # Clear existing items if any
-        self.flash_regularity_combo.addItems([str(d) for d in divisors])  # Add divisors to combo box
+        self.flash_regularity_combo.clear()  # Clear existing items
+        self.flash_regularity_combo.addItems([str(d) for d in divisors]) 
 
     def restore_defaults(self):
         """Restore settings to default values."""
@@ -226,9 +227,9 @@ class SettingsDialog(QDialog):
         self.set_color_button(self.color_buttons['background_color'], DEFAULT_BACKGROUND_COLOR)
         self.set_color_button(self.color_buttons['flash_color'], DEFAULT_FLASH_COLOR)
         self.set_color_button(self.color_buttons['clock_text_color'], DEFAULT_CLOCK_TEXT_COLOR)
-        self.set_color_button(self.color_buttons['button_color'], DEFAULT_BUTTON_COLOR)
+        self.set_color_button(self.color_buttons['toolbar_color'], DEFAULT_TOOLBAR_COLOR)
 
-    
+
     def update_volume_label(self, value):
         """Update the volume label to reflect the slider's current value."""
         self.volume_label.setText(f"{value}%")    
@@ -253,7 +254,7 @@ class SettingsDialog(QDialog):
                 sound.setLoopCount(1)  # Play the beep once per trigger
                 sound.setVolume(self.config.volume_level)  # Initial volume
                 self.sound_effects.append(sound)
-                logging.info(f"Beep sound loaded from: {path}")
+
             else:
                 logging.error(f"Beep sound file not found: {path}")
 
@@ -285,7 +286,7 @@ class SettingsDialog(QDialog):
             available_sounds = [sound for sound in self.sound_effects if sound != self.current_beep_sound]
             if available_sounds:
                 self.current_beep_sound = random.choice(available_sounds)
-                logging.info(f"Selected new beep sound.")
+                # logging.info(f"Selected new beep sound.")
             else:
                 logging.warning("No alternative beep sounds available.")
             
@@ -366,23 +367,6 @@ class SettingsDialog(QDialog):
             primary_screen_geometry.center().x() - dialog_width // 2,
             primary_screen_geometry.center().y() - dialog_height // 2
         )
-
-    def apply_button_style(self, button, color, hover_color):
-        button.setMinimumHeight(50)
-        button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        button.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {color.name()};
-                color: black;
-                border-radius: 10px;
-                font-size: 16px;
-                padding: 10px 12px;
-            }}
-            QPushButton:hover {{
-                background-color: {hover_color.name()};
-                color: red;
-            }}
-        """)
         
     def customize_buttons(self, button_box):
         """Customize the appearance of QDialogButtonBox buttons."""
@@ -397,7 +381,6 @@ class SettingsDialog(QDialog):
                     background-color: {BUTTON_COLORS[i].name()};
                     color: black;
                     border-radius: 10px;
-                    font-size: 16px;
                     padding: 10px 12px;
                 }}
                 QPushButton:hover {{
@@ -419,6 +402,7 @@ class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.config = AppConfig()
+        
         self.stacked_layout = QStackedLayout()
 
         # Initialize clock and wiggle flash widgets
@@ -435,11 +419,16 @@ class MainWindow(QWidget):
         main_layout.addLayout(self.stacked_layout)
         self.stacked_layout.setCurrentWidget(self.clock_app)
         self.setLayout(main_layout)
-
+        # self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        
+        # set size policies and adjust accordingly
+        # self.clock_app.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        # self.wiggle_flash.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        # self.adjustSize()
+        
         # Move the application to the extended monitor
         self.move_to_extended_monitor()
-    
-
+        
     def switch_to_wiggle_flash(self, hour):
         """Switch to the WiggleFlash screen for an hour change."""
         self.wiggle_flash.set_hour(hour)
@@ -455,29 +444,49 @@ class MainWindow(QWidget):
         """Move the window to the extended monitor if available."""
         desktop = QDesktopWidget()
         screen_count = desktop.screenCount()
-        logging.info(f"Detected {screen_count} screens.")
+        # logging.info(f"Detected {screen_count} screens.")
         if screen_count > 1:
             extended_screen = desktop.screenGeometry(1)
             self.setGeometry(extended_screen)
-            #self.clock_app.setFixedSize(extended_screen.width(), extended_screen.height())
-            #self.wiggle_flash.setFixedSize(extended_screen.width(), extended_screen.height())
+
         elif screen_count == 1:
             # Only the main monitor is available
             main_screen = desktop.screenGeometry(0)
-
-            wdth = int(main_screen.width())  # Removed comma
-            hght = int(main_screen.height())
-            self.setGeometry(0, int(hght-(WINDOW_AMT_OCCUPIED*hght)), wdth, int(WINDOW_AMT_OCCUPIED*hght))  # Corrected method call
-            #self.clock_app.setFixedSize(main_screen.width(), int(WINDOW_AMT_OCCUPIED*main_screen.height()))  # Use main_screen
-            #self.wiggle_flash.setFixedSize(main_screen.width(), main_screen.height())  # Use main_screen
+            window_height = int(main_screen.height() * WINDOW_AMT_OCCUPIED)
+            self.setGeometry(
+                0,
+                main_screen.height() - window_height,
+                main_screen.width(),
+                window_height
+            )
         else:
             logging.error("No screens detected. Exiting application.")
+        
+        self.setFixedSize(self.size())
             
     def update_audio_volume(self):
         self.wiggle_flash.player.setVolume(int(self.config.volume_level * 100))
+            
+
+    def allow_resize_briefly(self):
+        """Allow the user to resize the window for a short period."""
+        # logging.info("Temporarily allowing resizing of the window.")
+        screen = QApplication.primaryScreen()
+        desk_rect = screen.availableGeometry()
+        # Remove fixed size constraints
+        self.setMinimumSize(QSize(400, 200))  # Set a reasonable minimum size
+        self.setMaximumSize(desk_rect.size()) 
+        QTimer.singleShot(10000, self.reset_fixed_size)  # Re-lock after 10 seconds
+
+    def reset_fixed_size(self):
+        """Re-lock the window size to fixed dimensions."""
+        # logging.info("Re-locking the window size to fixed.")
+        current_size = self.size()
+        self.setMinimumSize(current_size)
+        self.setMaximumSize(current_size)
 
 class BigClockApp(QWidget):
-    """A fullscreen clock application with a customizable display."""
+    """A big clock application with a customizable display."""
     
     flashColorChanged = pyqtSignal()
     
@@ -485,6 +494,10 @@ class BigClockApp(QWidget):
         super().__init__(parent)
         self.main_window = main_window
         self.config = AppConfig()
+        
+        self.title_bar = CustomTitleBar(self)
+        self.title_bar.set_toolbar_color(self.config.toolbar_color)
+        self.installEventFilter(self)
         
         # Set up timer for updating time
         self.timer = QTimer(self)
@@ -499,9 +512,9 @@ class BigClockApp(QWidget):
         self._flash_color = QColor(self.config.background_color)
             
         # Parse configs set by user and determine the number of flashes and their duration
-        self.determine_flash_length()
+        self.determine_flash_length() # saves values as self.numFlashes and self.flashDur
         
-        # Set up flash animation
+        # Configure flash animation
         self.flash_animation = QPropertyAnimation(self, b"flash_color")
         self.flash_animation.setDuration(self.flashDur)  # 500ms ish
         self.flash_animation.setLoopCount(self.numFlashes)  # Even number of flashes
@@ -509,13 +522,20 @@ class BigClockApp(QWidget):
         self.flash_animation.setEndValue(self.config.flash_color)
         self.flash_animation.setEasingCurve(QEasingCurve.InOutQuad)
 
+        # flag to prevent recursive font size adjustment
+        self.is_adjusting_font = False 
+        self.font_adjust_start_time = None
+        
+        self.resize_timer = QTimer()
+        self.resize_timer.setSingleShot(True)
+        self.resize_timer.timeout.connect(self.adjust_font_sizes)
+        
         self.init_ui()
+        
 
     def init_ui(self):    
         """Initialize the user interface."""
-        self.setWindowTitle("Big Clock")
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
-        self.titleBar = CustomTitleBar(self)
+        self.setWindowTitle("ADHD Clock")
         
         self.set_background_color(self.config.background_color)        
         self.load_font()
@@ -530,21 +550,35 @@ class BigClockApp(QWidget):
     def create_date_label(self):
         """Create and return the date label."""
         label = QLabel(self)
-        
-        label.setStyleSheet(f"color: {self.config.clock_text_color.name()}; font-family: {self.font.family()}; font-size: 42px;")
         label.setAlignment(Qt.AlignCenter)
+        label.setStyleSheet(f"color: {self.config.clock_text_color.name()};")
+        label.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.MinimumExpanding)
+        # label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        # label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        # label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         return label
 
     def create_time_label(self):
         """Create and return the time label."""
         label = QLabel(self)
-        if self.config.toggle_24h: # the "am" and "pm", if used, cause the text to be too large and get clipped on edges. 
-            label.setStyleSheet(f"color: {self.config.clock_text_color.name()}; font-family: {self.font.family()}; font-size: 480px;")
-        else:
-            label.setStyleSheet(f"color: {self.config.clock_text_color.name()}; font-family: {self.font.family()}; font-size: 390px;")
         label.setAlignment(Qt.AlignCenter)
+        label.setStyleSheet(f"color: {self.config.clock_text_color.name()};")
+        # label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        label.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.MinimumExpanding)
+        # label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        # label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         return label
 
+    def eventFilter(self, obj, event):
+        """Filter resize and mouse events."""
+        """Filter resize and mouse events."""
+        if event.type() == QEvent.Resize:
+            if not self.is_adjusting_font:
+                self.resize_timer.start(100)  # Delay adjustment for smooth resizing
+            # Do not return True; allow the event to propagate
+            return False  # Indicate that the event has not been fully handled
+        return super().eventFilter(obj, event)
+        
     def set_background_color(self, color):
         """Set the background color of the widget."""
         palette = self.palette()
@@ -567,20 +601,21 @@ class BigClockApp(QWidget):
             else:
                 raise RuntimeError("No font specified")
         except Exception as e:
-            logging.warning(f"Failed to load specified font. Defaulting to Helvetica: {e}")
-            self.font = QFont('Helvetica')
-        # Set a fixed font size that won't change
-        self.font.setPointSize(480)
+            logging.warning(f"Failed to load specified font. Defaulting to Courier: {e}")
+            self.font = QFont()
+            self.font.setStyleHint(QFont.TypeWriter)
+        
+        self.font_family = self.font.family()
             
     def setup_layouts(self):
-        """Set up the layout for the widget with a fixed size to fill the second monitor."""
+        """Set up the layout for the widget with resizable dimensions."""
         # Main clock layout
         clock_layout = QVBoxLayout()
         clock_layout.setContentsMargins(0, 0, 0, 0)
         clock_layout.setSpacing(0)
 
         # Add the CustomTitleBar at the top
-        clock_layout.addWidget(self.titleBar)
+        clock_layout.addWidget(self.title_bar)
 
         # Add the date label
         clock_layout.addWidget(self.date_label, alignment=Qt.AlignCenter)
@@ -596,10 +631,11 @@ class BigClockApp(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
         main_layout.addLayout(clock_layout)
+        main_layout.setSizeConstraint(QLayout.SetNoConstraint)
+        # main_layout.setSizeConstraint(QLayout.SetFixedSize)
         
         # Apply the layout to the widget
         self.setLayout(main_layout)
-
 
     def determine_flash_length(self):
         # round down to the nearest whole number
@@ -629,7 +665,7 @@ class BigClockApp(QWidget):
     def start_flash(self):
         self.determine_flash_length()  # Recalculate durations based on current settings
         
-        logging.info(f"Starting flash with {self.numFlashes} flashes of {self.flashDur} ms each.")
+        logging.debug(f"Starting flash with {self.numFlashes} flashes of {self.flashDur} ms each.")
         self.flash_animation.setDuration(self.flashDur)
         self.flash_animation.setLoopCount(self.numFlashes)
         self.flash_animation.setStartValue(self.config.background_color)
@@ -676,16 +712,18 @@ class BigClockApp(QWidget):
             self.config.background_color = settings_dialog.background_color
             self.config.flash_color = settings_dialog.flash_color
             self.config.clock_text_color = settings_dialog.clock_text_color
-            self.config.button_color = settings_dialog.button_color
+            self.config.toolbar_color = settings_dialog.toolbar_color
 
             # Apply updated settings dynamically
             self.set_background_color(self.config.background_color)
-            self.date_label.setStyleSheet(f"color: {self.config.clock_text_color.name()}; font-family: {self.font.family()}; font-size: 42px;")
-            self.time_label.setStyleSheet(f"color: {self.config.clock_text_color.name()}; font-family: {self.font.family()}; font-size: 480px;")
-         
+            self.date_label.setStyleSheet(f"color: {self.config.clock_text_color.name()};")
+            self.time_label.setStyleSheet(f"color: {self.config.clock_text_color.name()};")
+            # Adjust font sizes
+            self.adjust_font_sizes()
+            
     def open_settings_dialog(self):
         """Display the settings dialog and update the config if settings are modified."""
-        logging.info("open_settings_dialog called")  # Added print statement
+        # logging.info("open_settings_dialog called")  # Added print statement
         # Display the settings dialog
         settings_dialog = SettingsDialog(self)
         if settings_dialog.exec_() == QDialog.Accepted:
@@ -698,15 +736,93 @@ class BigClockApp(QWidget):
             self.config.background_color = settings_dialog.config.background_color
             self.config.flash_color = settings_dialog.config.flash_color
             self.config.clock_text_color = settings_dialog.config.clock_text_color
-            self.config.button_color = settings_dialog.config.button_color
+            self.config.toolbar_color = settings_dialog.config.toolbar_color
 
             # Apply updated settings dynamically
             self.set_background_color(self.config.background_color)
-            self.date_label.setStyleSheet(f"color: {self.config.clock_text_color.name()}; font-family: {self.font.family()}; font-size: 42px;")
-            self.time_label.setStyleSheet(f"color: {self.config.clock_text_color.name()}; font-family: {self.font.family()}; font-size: 480px;")
-
+            self.date_label.setStyleSheet(f"color: {self.config.clock_text_color.name()};")
+            self.time_label.setStyleSheet(f"color: {self.config.clock_text_color.name()};")
+            
+            # Adjust font sizes
+            self.adjust_font_sizes()
+            
             # Update volume in wiggle flash
             self.main_window.update_audio_volume()
+    
+    # def resizeEvent(self, event):
+    #     super().resizeEvent(event)
+    #     if not self.is_adjusting_font and QApplication.mouseButtons() == Qt.LeftButton:
+    #             # User is resizing the window
+    #         self.resize_timer.start(100)
+    #     else:
+    #         return
+            
+    def get_optimal_font_size(self, max_width, max_height):
+        """Find the optimal font size for the given text to fit within max_width and max_height."""
+        if max_height<1 or max_width<1:
+            logging.error(f"Invalid dimensions for font size calculation... {max_width} by {max_height}")
+            return 12
+        # Set initial font size boundaries
+        font_size = 12
+        max_font_size = 8000 # arbitrary upper limit
+        sample_text = "00:00:00" if self.config.toggle_24h else "00:00:00 AM" 
+
+        while font_size <= max_font_size:
+            font = QFont(self.font_family, font_size)
+            fm = QFontMetrics(font)
+            text_width = fm.horizontalAdvance(sample_text)
+                
+            text_height = fm.height()
+            if text_width <= max_width and text_height <= max_height:
+                # Font size fits, try larger size
+                font_size += 1
+            else:
+                # Font size too big, go with one smaller size (which ostensibly worked!) 
+                font_size -= 1
+                break
+        # Return the font with the optimal size
+        return font_size
+        
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self.width() > 0 and self.height() > 0:
+            self.adjust_font_sizes()
+        else:
+            QTimer.singleShot(0, self.adjust_font_sizes)
+            
+    def adjust_font_sizes(self):
+        """Adjust the font sizes of the time and date labels to fit within the window."""
+        available_width = self.width()
+        available_height = self.height() - self.title_bar.height()
+        if available_width <= 0 or available_height <= 0:
+            logging.warning("Available width or height is zero or negative. Skipping font adjustment.")
+            return
+
+        self.is_adjusting_font = True
+
+        # Decide the portion of height allocated to time and date labels
+        ratio = self.config.relativeFontSize
+        if ratio<1:
+            ratio= 1/ratio
+            
+        k = 1/(1+ratio)
+        if k<0.5:
+            k = 1-k
+            
+        time_label_height = available_height * k
+        date_label_height = available_height * (1-k)
+
+        # Adjust font size for the time and date labels
+        self.date_label_font_size = self.get_optimal_font_size(available_width, date_label_height)
+        date_font = QFont(self.font_family, self.date_label_font_size)
+        self.date_label.setFont(date_font)
+
+        self.time_label_font_size = self.get_optimal_font_size(available_width, time_label_height)
+        time_font = QFont(self.font.family(), self.time_label_font_size)
+        self.time_label.setFont(time_font)
+
+        self.update()
+        self.is_adjusting_font = False 
 
 # --------------------------------------------------
 
@@ -797,10 +913,12 @@ class CustomTitleBar(QWidget):
         
         self.old_pos = None
         
+        # Create the layout for the title bar
         title_bar_layout = QHBoxLayout(self)
         title_bar_layout.setContentsMargins(1, 1, 1, 1)
         title_bar_layout.setSpacing(2)
         
+        # Title label in the center
         self.title = QLabel(f"{self.__class__.__name__}", self)
         self.title.setStyleSheet(
             """font-weight: bold;
@@ -817,11 +935,21 @@ class CustomTitleBar(QWidget):
 
         # Spacer to push buttons to the right
         title_bar_layout.addStretch()
+        
+        main_window = parent.main_window
+        
+        # Resize button for temporary resizing
+        self.resize_button = QToolButton(self)
+        resize_icon = self.style().standardIcon(QStyle.SP_TitleBarMaxButton)
+        self.resize_button.setIcon(resize_icon)
+        self.resize_button.setToolTip("Resize Window")
+        self.resize_button.clicked.connect(main_window.allow_resize_briefly)  # Allow resizing temporarily
 
         # Settings button
         self.settings_button = QToolButton(self)
         settings_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView)
         self.settings_button.setIcon(settings_icon)
+        self.resize_button.setToolTip("Resize Window")
         self.settings_button.clicked.connect(parent.open_settings_dialog)
 
         # Close button
@@ -830,12 +958,10 @@ class CustomTitleBar(QWidget):
             QStyle.StandardPixmap.SP_TitleBarCloseButton
         )
         self.close_button.setIcon(close_icon)
+        self.close_button.setToolTip("Close")
         self.close_button.clicked.connect(QApplication.quit)
         
-        buttons = [
-            self.settings_button,
-            self.close_button,
-        ]
+        buttons = [self.resize_button, self.settings_button, self.close_button]
         for button in buttons:
             button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             button.setFixedSize(QSize(28, 28))
@@ -846,7 +972,16 @@ class CustomTitleBar(QWidget):
                 """
             )
             title_bar_layout.addWidget(button)
-            
+
+    def set_toolbar_color(self, color: QColor):
+        """
+        Update the background color of the custom title bar.
+        The color is passed as a QColor object.
+        """
+        palette = self.palette()
+        palette.setColor(QPalette.ColorRole.Window, color)
+        self.setPalette(palette)
+        
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             self.old_pos = event.globalPos()
@@ -874,4 +1009,4 @@ if __name__ == "__main__":
         sys.exit(app.exec_())
     else:
         # User canceled the settings, exit the application
-        sys.exit()
+        app.quit()
