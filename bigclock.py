@@ -494,6 +494,7 @@ class BigClockApp(QWidget):
         super().__init__(parent)
         self.main_window = main_window
         self.config = AppConfig()
+        self.setWindowTitle("ADHD Clock")
         
         self.title_bar = CustomTitleBar(self)
         self.title_bar.set_toolbar_color(self.config.toolbar_color)
