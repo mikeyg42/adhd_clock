@@ -220,7 +220,7 @@ class SettingsDialog(QDialog):
     def restore_defaults(self):
         """Restore settings to default values."""
         self.flash_duration_input.setValue(DEFAULT_FLASH_DURATION)
-        self.flash_regularity_combo.setCurrentText(str(DEFAULT_FLASH_REGULARITY))  # Update this line
+        self.flash_regularity_combo.setCurrentText(str(DEFAULT_FLASH_REGULARITY)) 
         self.audio_input.setText(str(DEFAULT_AUDIO_PATH))
         self.volume_slider.setValue(int(DEFAULT_VOLUME_LEVEL * 100))
         self.toggle_24h_clock.setChecked(True)
@@ -419,12 +419,6 @@ class MainWindow(QWidget):
         main_layout.addLayout(self.stacked_layout)
         self.stacked_layout.setCurrentWidget(self.clock_app)
         self.setLayout(main_layout)
-        # self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        
-        # set size policies and adjust accordingly
-        # self.clock_app.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        # self.wiggle_flash.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        # self.adjustSize()
         
         # Move the application to the extended monitor
         self.move_to_extended_monitor()
@@ -494,6 +488,7 @@ class BigClockApp(QWidget):
         super().__init__(parent)
         self.main_window = main_window
         self.config = AppConfig()
+        self.setWindowTitle("ADHD Clock")
         
         self.title_bar = CustomTitleBar(self)
         self.title_bar.set_toolbar_color(self.config.toolbar_color)
@@ -570,7 +565,6 @@ class BigClockApp(QWidget):
         return label
 
     def eventFilter(self, obj, event):
-        """Filter resize and mouse events."""
         """Filter resize and mouse events."""
         if event.type() == QEvent.Resize:
             if not self.is_adjusting_font:
@@ -652,6 +646,7 @@ class BigClockApp(QWidget):
             time_format = "%H:%M:%S"
         else:
             time_format = "%I:%M:%S %p"
+            
         self.time_label.setText(now.strftime(time_format))
         self.date_label.setText(now.strftime("%A, %B %d, %Y"))
         
@@ -748,14 +743,6 @@ class BigClockApp(QWidget):
             
             # Update volume in wiggle flash
             self.main_window.update_audio_volume()
-    
-    # def resizeEvent(self, event):
-    #     super().resizeEvent(event)
-    #     if not self.is_adjusting_font and QApplication.mouseButtons() == Qt.LeftButton:
-    #             # User is resizing the window
-    #         self.resize_timer.start(100)
-    #     else:
-    #         return
             
     def get_optimal_font_size(self, max_width, max_height):
         """Find the optimal font size for the given text to fit within max_width and max_height."""
@@ -825,7 +812,6 @@ class BigClockApp(QWidget):
         self.is_adjusting_font = False 
 
 # --------------------------------------------------
-
 class WiggleFlash(QWidget):
     """Widget for displaying wiggling text animation on hour change."""
 
@@ -834,16 +820,17 @@ class WiggleFlash(QWidget):
         self.config = AppConfig()
         self.text = ""
         self.step = 0
-        self.timer = QBasicTimer() 
+        self.timer = QBasicTimer()
 
         # Set up background
         self.setAutoFillBackground(True)
         palette = self.palette()
         palette.setColor(QPalette.Window, QColor("white"))
         self.setPalette(palette)
-        
+
         # Set up font
-        self.myfonts = { "Bondoni 72", "Charlkboard", "Futura", "Herculanum", "Luminari", "Silom" }
+        self.myfonts = ["Bondoni 72", "Chalkboard", "Futura", "Herculanum", "Luminari", "Silom"]
+        self.font = random.choice(self.myfonts)  # Set random font initially
 
         # Start the timer for animation
         self.timer.start(60, self)  # This registers a timer event with the Qt event loop
@@ -852,30 +839,33 @@ class WiggleFlash(QWidget):
         self.player = QMediaPlayer()
         self.player.setMedia(QMediaContent(QUrl.fromLocalFile(self.config.audio_path)))
         self.player.setVolume(int(self.config.volume_level * 100))  # Convert to integer percentage
-   
+
     def set_hour(self, hour):
         """Set the text to display the current hour and play audio."""
+        # Randomize the font for the new hour
+        self.font = random.choice(self.myfonts)
+
+        # Handle 24h vs 12h format
         if self.config.toggle_24h:
             self.text = f"IT'S NOW {hour:02d}:00, BITCH!"
         else:
             am_pm = "AM" if hour < 12 else "PM"
             hour = hour if hour <= 12 else hour - 12
-            hour = 12 if hour == 0 else hour
+            if hour == 0:
+                hour = 12  # Midnight or noon should be 12:00
             self.text = f"IT'S NOW {hour:d}:00 {am_pm}, BITCH!"
+
+        # Play audio and update display
         self.player.play()
         self.update()
 
     def paintEvent(self, event):
         """Paint the wiggling text."""
-        font = QFont()
-        font.setFamily(random.choice(self.myfonts))
-        font.setPointSize(180)
-        font.setBold(False)
-        font.setItalic(False)
-        
-        painter = QPainter()
+        font = QFont(self.font, 180)  # Use the font set in set_hour()
+        painter = QPainter(self)
         painter.setFont(font)
         metrics = painter.fontMetrics()
+
         # Center the text horizontally and vertically
         x = (self.width() - metrics.horizontalAdvance(self.text)) // 2
         y = (self.height() + metrics.ascent() - metrics.descent()) // 2
@@ -896,6 +886,7 @@ class WiggleFlash(QWidget):
             # Draw each character with its y position modified by the sine table
             painter.drawText(x, y - dy, char)
             x += metrics.horizontalAdvance(char)
+        painter.end()
 
     def timerEvent(self, event):
         """Update the step for the wiggling animation."""
@@ -904,6 +895,7 @@ class WiggleFlash(QWidget):
             self.update()  # Trigger a repaint
         else:
             super().timerEvent(event)
+
             
 class CustomTitleBar(QWidget):
     def __init__(self, parent):
